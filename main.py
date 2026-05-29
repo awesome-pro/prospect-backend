@@ -54,6 +54,38 @@ def get_prospect(prospect_id: str):
     return result.data
 
 
+@app.post("/prospects/{prospect_id}/retry", response_model=Prospect)
+def retry_research(prospect_id: str, background_tasks: BackgroundTasks):
+    db = get_db()
+    result = db.table("prospects").select("*").eq("id", prospect_id).single().execute()
+    prospect = result.data
+    if not prospect:
+        raise HTTPException(status_code=404, detail="Prospect not found")
+    if prospect["status"] != "failed":
+        raise HTTPException(status_code=400, detail="Only failed prospects can be retried")
+
+    updated = db.table("prospects").update({
+        "status": "pending",
+        "error_message": None,
+        "research_summary": None,
+        "linkedin_connection_request": None,
+        "linkedin_message": None,
+        "cold_email_subject": None,
+        "cold_email_body": None,
+    }).eq("id", prospect_id).execute()
+
+    data = {
+        "name": prospect["name"],
+        "linkedin_url": prospect["linkedin_url"],
+        "x_url": prospect["x_url"],
+        "email": prospect["email"],
+        "notes": prospect["notes"],
+        "reference_links": prospect["reference_links"] or [],
+    }
+    background_tasks.add_task(run_research, prospect_id, data)
+    return updated.data[0]
+
+
 @app.post("/prospects/{prospect_id}/send-email", response_model=Prospect)
 def send_email(prospect_id: str):
     db = get_db()

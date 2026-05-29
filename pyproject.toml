@@ -1,0 +1,11 @@
+[project]
+name = "prospectai-backend"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi[standard]>=0.115.5",
+    "supabase>=2.10.0",
+    "xai-sdk>=0.0.1",
+    "resend>=2.4.0",
+    "python-dotenv>=1.0.1",
+]
