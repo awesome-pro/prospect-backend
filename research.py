@@ -15,7 +15,7 @@ def _grok_client() -> Client:
 
 
 def _build_research_prompt(data: dict) -> str:
-    parts = [f"Research this person for professional outreach:", f"Name: {data['name']}"]
+    parts = ["I am an agentic AI engineer with the :", f"Name: {data['name']}"]
     if data.get("linkedin_url"):
         parts.append(f"LinkedIn: {data['linkedin_url']}")
     if data.get("x_url"):
@@ -23,9 +23,9 @@ def _build_research_prompt(data: dict) -> str:
     if data.get("email"):
         parts.append(f"Email: {data['email']}")
     if data.get("notes"):
-        parts.append(f"Notes: {data['notes']}")
+        parts.append(f"Personal Notes: {data['notes']}")
     if data.get("reference_links"):
-        parts.append("Reference links (read and summarize each):")
+        parts.append("Reference links (rea:")
         for link in data["reference_links"]:
             parts.append(f"  - {link}")
 
@@ -42,18 +42,25 @@ Be thorough and specific. This research will drive highly personalized outreach 
     return "\n".join(parts)
 
 
-def _build_generation_prompt(research_text: str, prospect_name: str) -> str:
+def _build_generation_prompt(research_text: str, prospect_name: str, linkedin_mode: str) -> str:
+    if linkedin_mode == "connection_request":
+        linkedin_instruction = "linkedin_connection_request (≤300 characters strict — count carefully). Do NOT include linkedin_message."
+        json_shape = '{"linkedin_connection_request": "...", "cold_email_subject": "...", "cold_email_body": "..."}'
+    else:
+        linkedin_instruction = "linkedin_message (150-250 words). Do NOT include linkedin_connection_request."
+        json_shape = '{"linkedin_message": "...", "cold_email_subject": "...", "cold_email_body": "..."}'
+
     return f"""Here is the research on {prospect_name} and their company:
 
 {research_text}
 
-Now generate the 4 outreach pieces as described. Remember:
-- linkedin_connection_request must be ≤300 characters (count carefully)
-- linkedin_message should be 150-250 words
+Now generate the outreach pieces as described. LinkedIn mode: {linkedin_mode}
+- Generate {linkedin_instruction}
 - cold_email_body should be ≤200 words
 - Every piece must reference specific, real details from the research above
 
-Output ONLY the JSON object, nothing else."""
+Output ONLY this JSON shape, nothing else:
+{json_shape}"""
 
 
 def run_research(prospect_id: str, data: dict) -> None:
@@ -69,13 +76,15 @@ def run_research(prospect_id: str, data: dict) -> None:
         research_chat = client.chat.create(
             model="grok-4.3",
             tools=[web_search()],
+
         )
         research_chat.append(user(research_prompt))
         research_response = research_chat.sample()
         research_text = research_response.content
 
         # Step 2: Generate outreach content (system prompt embedded in user message)
-        gen_prompt = _build_generation_prompt(research_text, data["name"])
+        linkedin_mode = data.get("linkedin_mode", "message")
+        gen_prompt = _build_generation_prompt(research_text, data["name"], linkedin_mode)
         full_gen_message = f"{SYSTEM_PROMPT}\n\n---\n\n{gen_prompt}"
         gen_chat = client.chat.create(model="grok-4.3")
         gen_chat.append(user(full_gen_message))
@@ -91,16 +100,20 @@ def run_research(prospect_id: str, data: dict) -> None:
 
         outputs = json.loads(raw)
 
-        # Enforce connection request character limit
-        conn_req = outputs.get("linkedin_connection_request", "")
-        if len(conn_req) > 300:
-            conn_req = conn_req[:297] + "..."
+        conn_req = None
+        linkedin_msg = None
+        if linkedin_mode == "connection_request":
+            conn_req = outputs.get("linkedin_connection_request", "")
+            if len(conn_req) > 300:
+                conn_req = conn_req[:297] + "..."
+        else:
+            linkedin_msg = outputs.get("linkedin_message", "")
 
         db.table("prospects").update({
             "status": "complete",
             "research_summary": research_text,
             "linkedin_connection_request": conn_req,
-            "linkedin_message": outputs.get("linkedin_message", ""),
+            "linkedin_message": linkedin_msg,
             "cold_email_subject": outputs.get("cold_email_subject", ""),
             "cold_email_body": outputs.get("cold_email_body", ""),
         }).eq("id", prospect_id).execute()
